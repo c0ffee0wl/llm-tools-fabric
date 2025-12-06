@@ -12,7 +12,6 @@ import re
 from typing import Optional, Tuple
 
 import llm
-from llm.cli import load_template
 
 
 # Pattern auto-selection rules: (keywords, content_hints, pattern_name)
@@ -93,6 +92,7 @@ def _suggest_patterns(task: str) -> str:
     Returns the suggestion text from the template.
     """
     try:
+        from llm.cli import load_template  # Deferred import to avoid circular import
         template = load_template("fabric:suggest_pattern")
         model = llm.get_model(llm.get_default_model())
 
@@ -113,7 +113,8 @@ def _run_pattern(pattern_name: str, input_text: str) -> str:
     This ensures the pattern execution doesn't pollute the main conversation context.
     """
     try:
-        # Load the fabric template
+        # Deferred import to avoid circular import
+        from llm.cli import load_template
         template = load_template(f"fabric:{pattern_name}")
     except Exception as e:
         raise ValueError(f"Pattern '{pattern_name}' not found: {e}")
