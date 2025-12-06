@@ -1,0 +1,24 @@
+[project]
+name = "llm-tools-fabric"
+version = "0.1.0"
+description = "Fabric pattern integration for llm - run 230+ AI patterns as isolated subagents"
+readme = "README.md"
+authors = [{name = "c0ffee0wl"}]
+license = {text = "GPL-3.0"}
+classifiers = [
+    "License :: OSI Approved :: Apache Software License"
+]
+dependencies = [
+    "llm",
+    "llm-templates-fabric"
+]
+
+[project.urls]
+Homepage = "https://github.com/c0ffee0wl/llm-tools-fabric"
+
+[project.entry-points.llm]
+fabric = "llm_tools_fabric"
+
+[build-system]
+requires = ["setuptools>=61.0"]
+build-backend = "setuptools.build_meta"
