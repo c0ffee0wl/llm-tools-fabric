@@ -1,7 +1,7 @@
 """
 LLM tools for Fabric pattern integration.
 
-Provides the `fabric` tool for executing Fabric AI patterns as isolated subagents.
+Provides the `prompt_fabric` tool for executing Fabric AI patterns as isolated subagents.
 Supports auto-selection of patterns based on task description, or explicit pattern
 specification. Works standalone with llm CLI or integrated with llm-sidechat.
 
@@ -246,9 +246,14 @@ def _run_pattern(pattern_name: str, input_text: str) -> str:
     return response.text()
 
 
-def fabric(task: str, pattern: str = "", input_text: str = "", source: str = "") -> str:
+def prompt_fabric(task: str, pattern: str = "", input_text: str = "", source: str = "") -> str:
     """
     Execute a Fabric AI pattern as an isolated subagent.
+
+    IMPORTANT: Only call this tool if the user explicitly mentions "Fabric" or "Pattern" 
+    in their request.
+    Do not use this tool for general summarization or content processing unless the user
+    specifically asks for Fabric patterns.
 
     Use this tool when you need to run Fabric patterns for tasks like:
     summarization, content extraction, security analysis, code review, etc.
@@ -278,16 +283,16 @@ def fabric(task: str, pattern: str = "", input_text: str = "", source: str = "")
 
     Examples:
         # YouTube video (content stays in subagent)
-        fabric(task="summarize video", source="yt:dQw4w9WgXcQ")
+        prompt_fabric(task="summarize video", source="yt:dQw4w9WgXcQ")
 
         # Local document
-        fabric(task="extract insights", source="file:~/notes.md")
+        prompt_fabric(task="extract insights", source="file:~/notes.md")
 
         # With explicit pattern
-        fabric(pattern="extract_wisdom", source="yt:VIDEO_ID")
+        prompt_fabric(pattern="extract_wisdom", source="yt:VIDEO_ID")
 
         # With pre-loaded content (less efficient for main context)
-        fabric(task="summarize", input_text=already_loaded_content)
+        prompt_fabric(task="summarize", input_text=already_loaded_content)
     """
     # Load from source if provided (keeps content in isolated context)
     if source:
@@ -322,7 +327,7 @@ def fabric(task: str, pattern: str = "", input_text: str = "", source: str = "")
         except ValueError as e:
             return json.dumps({
                 "error": str(e),
-                "hint": "Use fabric(task='describe what you want') to get pattern suggestions"
+                "hint": "Use prompt_fabric(task='describe what you want') to get pattern suggestions"
             }, indent=2)
         except Exception as e:
             return json.dumps({
@@ -354,11 +359,11 @@ def fabric(task: str, pattern: str = "", input_text: str = "", source: str = "")
     return json.dumps({
         "task": task,
         "suggestions": suggestions,
-        "hint": "Call fabric(pattern='pattern_name', input_text=content) with your chosen pattern"
+        "hint": "Call prompt_fabric(pattern='pattern_name', input_text=content) with your chosen pattern"
     }, indent=2)
 
 
 @llm.hookimpl
 def register_tools(register):
-    """Register the fabric tool with llm."""
-    register(fabric)
+    """Register the prompt_fabric tool with llm."""
+    register(prompt_fabric)
