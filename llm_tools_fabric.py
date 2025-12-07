@@ -66,6 +66,25 @@ AUTO_SELECT_RULES = [
 ]
 
 
+# Source-based pattern selection: (action_keyword, pattern_name)
+# When source prefix provides explicit context, only the action keyword is needed
+SOURCE_ACTIONS = {
+    'yt': [
+        ('summarize', 'youtube_summary'),
+        ('zusammenfass', 'youtube_summary'),
+        ('wisdom', 'extract_wisdom'),
+        ('extract', 'extract_wisdom'),
+        ('insights', 'extract_wisdom'),
+        ('lecture', 'summarize_lecture'),
+        ('chapters', 'create_video_chapters'),
+    ],
+    'pdf': [
+        ('summarize', 'summarize_paper'),
+        ('analyze', 'analyze_paper'),
+    ],
+}
+
+
 def _download_url_to_temp(url: str, suffix: str = '') -> str:
     """Download URL to a temporary file, return the path."""
     request = urllib.request.Request(
@@ -151,13 +170,23 @@ def _load_source(source: str) -> str:
         raise ValueError(f"Unknown source prefix: {prefix}. Supported: file, yt, pdf, github, url")
 
 
-def _auto_select_pattern(task: str, input_text: str = "") -> Optional[str]:
+def _auto_select_pattern(task: str, input_text: str = "", source: str = "") -> Optional[str]:
     """
     Auto-select a Fabric pattern based on task description and input content.
 
     Returns pattern name if a clear match is found, None otherwise.
     """
     task_lower = task.lower()
+
+    # Source-based: direct action lookup (skip complex keyword matching)
+    if ':' in source:
+        prefix = source.split(':', 1)[0].lower()
+        if prefix in SOURCE_ACTIONS:
+            for action, pattern in SOURCE_ACTIONS[prefix]:
+                if action in task_lower:
+                    return pattern
+
+    # No source or unknown prefix: use keyword + content hint matching
     input_lower = input_text.lower()[:1000]  # Only check first 1000 chars for hints
 
     for keywords, content_hints, pattern_name in AUTO_SELECT_RULES:
@@ -302,7 +331,7 @@ def fabric(task: str, pattern: str = "", input_text: str = "", source: str = "")
             }, indent=2)
 
     # Try auto-selection based on task
-    selected_pattern = _auto_select_pattern(task, input_text)
+    selected_pattern = _auto_select_pattern(task, input_text, source)
 
     if selected_pattern:
         # Auto-selected a pattern, run it
