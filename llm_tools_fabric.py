@@ -8,7 +8,10 @@ specification. Works standalone with llm CLI or integrated with llm-sidechat.
 Fabric patterns are specialized AI prompts from https://github.com/danielmiessler/fabric
 """
 import json
+import os
 import re
+import tempfile
+import urllib.request
 from typing import Optional, Tuple
 
 import llm
@@ -61,6 +64,91 @@ AUTO_SELECT_RULES = [
     (["summarize"], [], "summarize"),
     (["zusammenfass"], [], "summarize"),  # DE
 ]
+
+
+def _download_url_to_temp(url: str, suffix: str = '') -> str:
+    """Download URL to a temporary file, return the path."""
+    request = urllib.request.Request(
+        url,
+        headers={
+            'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/131.0.0.0 Safari/537.36'
+        }
+    )
+    with tempfile.NamedTemporaryFile(suffix=suffix, delete=False) as tmp:
+        with urllib.request.urlopen(request) as response:
+            tmp.write(response.read())
+        return tmp.name
+
+
+def _load_source(source: str) -> str:
+    """
+    Load content from a source URI.
+
+    Supported prefixes:
+    - file:/path/to/doc.md - Local text file (markdown, txt, etc.)
+    - yt:VIDEO_URL - YouTube transcript
+    - pdf:FILE_PATH or pdf:URL - PDF document
+    - github:owner/repo - GitHub repository
+    - url:https://... - Web page
+    """
+    if ':' not in source:
+        raise ValueError(f"Invalid source format: {source}. Expected prefix:argument (e.g., yt:VIDEO_ID, pdf:/path/to/file)")
+
+    prefix, argument = source.split(':', 1)
+    prefix = prefix.lower()
+
+    if prefix == 'file':
+        # Local text file (markdown, txt, etc.)
+        path = os.path.expanduser(argument)
+        if not os.path.exists(path):
+            raise ValueError(f"File not found: {path}")
+        with open(path, 'r', encoding='utf-8') as f:
+            return f.read()
+
+    elif prefix == 'yt':
+        loaders = llm.get_fragment_loaders()
+        if 'yt' not in loaders:
+            raise ValueError("YouTube loader not available (install llm-fragments-youtube-transcript)")
+        results = loaders['yt'](argument)
+        return '\n\n'.join(str(r) for r in results)
+
+    elif prefix == 'pdf':
+        loaders = llm.get_fragment_loaders()
+        if 'pdf' not in loaders:
+            raise ValueError("PDF loader not available")
+        # Handle remote PDFs
+        if argument.startswith(('http://', 'https://')):
+            temp_file = _download_url_to_temp(argument, suffix='.pdf')
+            try:
+                results = loaders['pdf'](temp_file)
+            finally:
+                os.unlink(temp_file)
+        else:
+            path = os.path.expanduser(argument)
+            results = loaders['pdf'](path)
+        return '\n\n'.join(str(r) for r in results)
+
+    elif prefix == 'github':
+        loaders = llm.get_fragment_loaders()
+        if 'github' not in loaders:
+            raise ValueError("GitHub loader not available")
+        results = loaders['github'](argument)
+        return '\n\n'.join(str(r) for r in results)
+
+    elif prefix == 'url':
+        # Use trafilatura for web pages with custom user agent
+        import trafilatura
+        from trafilatura.settings import use_config
+        config = use_config()
+        config.set("DEFAULT", "USER_AGENT", "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/131.0.0.0 Safari/537.36")
+        downloaded = trafilatura.fetch_url(argument, config=config)
+        if downloaded is None:
+            raise ValueError(f"Failed to fetch URL: {argument}")
+        content = trafilatura.extract(downloaded, output_format="markdown")
+        return content or ""
+
+    else:
+        raise ValueError(f"Unknown source prefix: {prefix}. Supported: file, yt, pdf, github, url")
 
 
 def _auto_select_pattern(task: str, input_text: str = "") -> Optional[str]:
@@ -129,39 +217,59 @@ def _run_pattern(pattern_name: str, input_text: str) -> str:
     return response.text()
 
 
-def fabric(task: str, pattern: str = "", input_text: str = "") -> str:
+def fabric(task: str, pattern: str = "", input_text: str = "", source: str = "") -> str:
     """
-    Execute a Fabric pattern or get pattern recommendations.
+    Execute a Fabric AI pattern as an isolated subagent.
 
-    Fabric patterns are specialized AI prompts for common tasks like summarization,
-    analysis, extraction, and content creation. This tool runs patterns in isolation,
-    so they don't affect the main conversation context.
+    Use this tool when you need to run Fabric patterns for tasks like:
+    summarization, content extraction, security analysis, code review, etc.
+    Fabric patterns run in isolation - large inputs stay out of main context.
+
+    IMPORTANT: When processing YouTube videos, PDFs, web pages, or local files,
+    use the 'source' parameter instead of loading content first. This keeps
+    the full content out of the main conversation context.
 
     Args:
-        task: Description of what to accomplish (e.g., "summarize this video",
-              "analyze threat report", "extract key insights", "explain code").
-              Used for auto-selecting the appropriate pattern.
-        pattern: (Optional) Specific pattern name to run. If not provided,
+        task: Description of what to accomplish. Used for auto-selecting
+              the appropriate Fabric pattern.
+        pattern: (Optional) Specific Fabric pattern name to run. If not provided,
                  auto-selects based on task or suggests options.
-                 Examples: extract_wisdom, youtube_summary, analyze_threat_report,
-                 summarize_paper, explain_code, create_sigma_rules
-        input_text: Content to process with the pattern. This should be the actual
-                   text content (use load_yt, load_pdf, load_github first to extract).
+        input_text: Content to process (use 'source' parameter instead when possible).
+        source: (Optional) Content source URI. Loads content internally
+                (keeps it out of main context). Formats:
+                - file:/path/to/doc.md - Local text file (markdown, txt, etc.)
+                - yt:VIDEO_URL - YouTube transcript
+                - pdf:FILE_PATH or pdf:URL - PDF document
+                - github:owner/repo - GitHub repository
+                - url:https://... - Web page
 
     Returns:
-        The processed result from the Fabric pattern, or pattern suggestions
-        if no clear pattern match is found.
+        JSON with the processed result from the Fabric pattern, or pattern
+        suggestions if no clear pattern match is found.
 
     Examples:
+        # YouTube video (content stays in subagent)
+        fabric(task="summarize video", source="yt:dQw4w9WgXcQ")
+
+        # Local document
+        fabric(task="extract insights", source="file:~/notes.md")
+
         # With explicit pattern
-        fabric(task="", pattern="extract_wisdom", input_text=transcript)
+        fabric(pattern="extract_wisdom", source="yt:VIDEO_ID")
 
-        # With auto-selection
-        fabric(task="summarize this YouTube video", input_text=transcript)
-
-        # Get suggestions for ambiguous request
-        fabric(task="process this document", input_text=doc_text)
+        # With pre-loaded content (less efficient for main context)
+        fabric(task="summarize", input_text=already_loaded_content)
     """
+    # Load from source if provided (keeps content in isolated context)
+    if source:
+        try:
+            input_text = _load_source(source)
+        except Exception as e:
+            return json.dumps({
+                "error": f"Failed to load source: {e}",
+                "source": source
+            }, indent=2)
+
     # Validate input
     if not task and not pattern:
         return json.dumps({
