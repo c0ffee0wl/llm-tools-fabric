@@ -20,49 +20,32 @@ import llm
 # Pattern auto-selection rules: (keywords, content_hints, pattern_name)
 # Keywords are checked against task description (case-insensitive)
 # Content hints are checked against input_text (optional additional signal)
-# Supports both English and German keywords
 AUTO_SELECT_RULES = [
-    # YouTube-specific patterns (EN + DE)
+    # YouTube-specific patterns
     (["youtube", "video", "summarize"], ["youtube.com", "youtu.be"], "youtube_summary"),
-    (["youtube", "video", "zusammenfass"], ["youtube.com", "youtu.be"], "youtube_summary"),  # DE
     (["wisdom", "insights", "extract"], ["youtube.com", "youtu.be"], "extract_wisdom"),
-    (["weisheit", "erkenntnisse", "extrahier"], ["youtube.com", "youtu.be"], "extract_wisdom"),  # DE
     (["lecture", "class", "lesson"], ["youtube.com", "youtu.be"], "summarize_lecture"),
-    (["vorlesung", "vortrag", "lektion"], ["youtube.com", "youtu.be"], "summarize_lecture"),  # DE
     (["chapters", "timestamps", "sections"], ["youtube.com", "youtu.be"], "create_video_chapters"),
-    (["kapitel", "zeitstempel", "abschnitte"], ["youtube.com", "youtu.be"], "create_video_chapters"),  # DE
 
-    # PDF/Document patterns (EN + DE)
+    # PDF/Document patterns
     (["paper", "academic", "research"], [], "summarize_paper"),
-    (["paper", "akademisch", "forschung", "wissenschaftlich"], [], "summarize_paper"),  # DE
     (["analyze", "paper"], [], "analyze_paper"),
-    (["analysier", "paper"], [], "analyze_paper"),  # DE
 
-    # Security/Threat patterns (EN + DE)
+    # Security/Threat patterns
     (["threat", "report", "security"], [], "analyze_threat_report"),
-    (["bedrohung", "bericht", "sicherheit"], [], "analyze_threat_report"),  # DE
     (["malware", "ioc", "indicator"], [], "analyze_malware"),
-    (["schadsoftware", "indikator"], [], "analyze_malware"),  # DE
     (["sigma", "detection", "rule"], [], "create_sigma_rules"),
-    (["sigma", "erkennung", "regel"], [], "create_sigma_rules"),  # DE
     (["stride", "threat", "model"], [], "create_stride_threat_model"),
-    (["stride", "bedrohungsmodell"], [], "create_stride_threat_model"),  # DE
 
-    # Code patterns (EN + DE)
+    # Code patterns
     (["explain", "code"], [], "explain_code"),
-    (["erklär", "code"], [], "explain_code"),  # DE
     (["review", "design", "architecture"], [], "review_design"),
-    (["überprüf", "design", "architektur"], [], "review_design"),  # DE
 
-    # General patterns (EN + DE)
+    # General patterns
     (["extract", "ideas"], [], "extract_ideas"),
-    (["extrahier", "ideen"], [], "extract_ideas"),  # DE
     (["extract", "insights"], [], "extract_insights"),
-    (["extrahier", "erkenntnisse"], [], "extract_insights"),  # DE
     (["analyze", "claims", "truth"], [], "analyze_claims"),
-    (["analysier", "behauptungen", "wahrheit"], [], "analyze_claims"),  # DE
     (["summarize"], [], "summarize"),
-    (["zusammenfass"], [], "summarize"),  # DE
 ]
 
 
@@ -71,7 +54,6 @@ AUTO_SELECT_RULES = [
 SOURCE_ACTIONS = {
     'yt': [
         ('summarize', 'youtube_summary'),
-        ('zusammenfass', 'youtube_summary'),
         ('wisdom', 'extract_wisdom'),
         ('extract', 'extract_wisdom'),
         ('insights', 'extract_wisdom'),
@@ -248,26 +230,31 @@ def _run_pattern(pattern_name: str, input_text: str) -> str:
 
 def prompt_fabric(task: str, pattern: str = "", input_text: str = "", source: str = "") -> str:
     """
-    Execute a Fabric AI pattern as an isolated subagent.
+    Run a Fabric AI pattern (only when explicitly requested).
 
-    IMPORTANT: Only call this tool if the user explicitly mentions "Fabric" or "Pattern" 
-    in their request.
-    Do not use this tool for general summarization or content processing unless the user
-    specifically asks for Fabric patterns.
+    USE ONLY when the user explicitly:
+    - Mentions "Fabric" or "pattern" by name
+    - Asks to run a specific pattern like "extract_wisdom"
+    - Requests Fabric-style analysis (summarize lecture, analyze threat, etc.)
 
-    Use this tool when you need to run Fabric patterns for tasks like:
-    summarization, content extraction, security analysis, code review, etc.
-    Fabric patterns run in isolation - large inputs stay out of main context.
+    DO NOT use for:
+    - General summarization (answer directly instead)
+    - Simple content processing (use other tools)
+    - Tasks the user didn't specifically request Fabric for
 
-    IMPORTANT: When processing YouTube videos, PDFs, web pages, or local files,
-    use the 'source' parameter instead of loading content first. This keeps
-    the full content out of the main conversation context.
+    IMPORTANT: Always use English for the 'task' parameter.
+    Fabric patterns are written in English and produce best results with English input.
+
+    Fabric patterns run isolated - large content stays out of main context.
+    When processing YouTube videos, PDFs, web pages, or local files,
+    use the 'source' parameter instead of loading content first.
 
     Args:
         task: Description of what to accomplish. Used for auto-selecting
               the appropriate Fabric pattern.
         pattern: (Optional) Specific Fabric pattern name to run. If not provided,
                  auto-selects based on task or suggests options.
+            Examples: "extract_wisdom", "summarize_paper", "analyze_threat_report"
         input_text: Content to process (use 'source' parameter instead when possible).
         source: (Optional) Content source URI. Loads content internally
                 (keeps it out of main context). Formats:
@@ -278,8 +265,7 @@ def prompt_fabric(task: str, pattern: str = "", input_text: str = "", source: st
                 - url:https://... - Web page
 
     Returns:
-        JSON with the processed result from the Fabric pattern, or pattern
-        suggestions if no clear pattern match is found.
+        JSON with 'pattern', 'result', 'auto_selected', and 'error' fields.
 
     Examples:
         # YouTube video (content stays in subagent)
