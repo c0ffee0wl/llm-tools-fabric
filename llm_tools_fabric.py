@@ -7,7 +7,6 @@ specification. Works standalone with llm CLI or integrated with llm-sidechat.
 
 Fabric patterns are specialized AI prompts from https://github.com/danielmiessler/fabric
 """
-import json
 import os
 import re
 import tempfile
@@ -15,6 +14,15 @@ import urllib.request
 from typing import Optional
 
 import llm
+
+
+def _escape_xml_attr(value: str) -> str:
+    """Escape special characters for use in XML attribute values."""
+    return (value
+            .replace("&", "&amp;")
+            .replace("<", "&lt;")
+            .replace(">", "&gt;")
+            .replace('"', "&quot;"))
 
 
 # Pattern auto-selection rules: (keywords, content_hints, pattern_name)
@@ -390,7 +398,10 @@ def prompt_fabric(task: str, pattern: str = "", input_text: str = "", source: st
                 - file:/path/to/file.md - Local text file
 
     Returns:
-        JSON with 'pattern', 'result', 'auto_selected', and 'error' fields.
+        XML-tagged output preserving Markdown formatting:
+        - Success: <fabric_result pattern="name" auto_selected="true">CONTENT</fabric_result>
+        - Error: <fabric_error pattern="name">ERROR MESSAGE</fabric_error>
+        - Suggestions: <fabric_suggestions task="task">SUGGESTIONS</fabric_suggestions>
 
     Examples:
         # YouTube video by ID
@@ -413,17 +424,11 @@ def prompt_fabric(task: str, pattern: str = "", input_text: str = "", source: st
         try:
             input_text = _load_source(source)
         except Exception as e:
-            return json.dumps({
-                "error": f"Failed to load source: {e}",
-                "source": source
-            }, indent=2)
+            return f'<fabric_error source="{_escape_xml_attr(source)}">\nFailed to load source: {e}\n</fabric_error>'
 
     # Validate input
     if not task and not pattern:
-        return json.dumps({
-            "error": "Either 'task' or 'pattern' must be provided",
-            "hint": "Describe what you want to do, or specify a pattern name"
-        }, indent=2)
+        return '<fabric_error type="validation">\nEither \'task\' or \'pattern\' must be provided.\nHint: Describe what you want to do, or specify a pattern name.\n</fabric_error>'
 
     # If explicit pattern provided, run it directly
     if pattern:
@@ -434,20 +439,11 @@ def prompt_fabric(task: str, pattern: str = "", input_text: str = "", source: st
 
         try:
             result = _run_pattern(pattern_name, input_text)
-            return json.dumps({
-                "pattern": pattern_name,
-                "result": result
-            }, indent=2)
+            return f'<fabric_result pattern="{_escape_xml_attr(pattern_name)}">\n{result}\n</fabric_result>'
         except ValueError as e:
-            return json.dumps({
-                "error": str(e),
-                "hint": "Use prompt_fabric(task='describe what you want') to get pattern suggestions"
-            }, indent=2)
+            return f'<fabric_error pattern="{_escape_xml_attr(pattern_name)}">\n{e}\nHint: Use prompt_fabric(task=\'describe what you want\') to get pattern suggestions.\n</fabric_error>'
         except Exception as e:
-            return json.dumps({
-                "error": f"Pattern execution failed: {e}",
-                "pattern": pattern_name
-            }, indent=2)
+            return f'<fabric_error pattern="{_escape_xml_attr(pattern_name)}">\nPattern execution failed: {e}\n</fabric_error>'
 
     # Try auto-selection based on task
     selected_pattern = _auto_select_pattern(task, input_text, source)
@@ -456,25 +452,13 @@ def prompt_fabric(task: str, pattern: str = "", input_text: str = "", source: st
         # Auto-selected a pattern, run it
         try:
             result = _run_pattern(selected_pattern, input_text)
-            return json.dumps({
-                "pattern": selected_pattern,
-                "auto_selected": True,
-                "result": result
-            }, indent=2)
+            return f'<fabric_result pattern="{_escape_xml_attr(selected_pattern)}" auto_selected="true">\n{result}\n</fabric_result>'
         except Exception as e:
-            return json.dumps({
-                "error": f"Pattern execution failed: {e}",
-                "pattern": selected_pattern,
-                "auto_selected": True
-            }, indent=2)
+            return f'<fabric_error pattern="{_escape_xml_attr(selected_pattern)}" auto_selected="true">\nPattern execution failed: {e}\n</fabric_error>'
 
     # No clear match - get suggestions
     suggestions = _suggest_patterns(task)
-    return json.dumps({
-        "task": task,
-        "suggestions": suggestions,
-        "hint": "Call prompt_fabric(pattern='pattern_name', input_text=content) with your chosen pattern"
-    }, indent=2)
+    return f'<fabric_suggestions task="{_escape_xml_attr(task)}">\n{suggestions}\n\nHint: Call prompt_fabric(pattern=\'pattern_name\', input_text=content) with your chosen pattern.\n</fabric_suggestions>'
 
 
 @llm.hookimpl
