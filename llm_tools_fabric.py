@@ -12,7 +12,7 @@ import os
 import re
 import tempfile
 import urllib.request
-from typing import Optional, Tuple
+from typing import Optional
 
 import llm
 
@@ -51,6 +51,7 @@ AUTO_SELECT_RULES = [
 
 # Source-based pattern selection: (action_keyword, pattern_name)
 # When source prefix provides explicit context, only the action keyword is needed
+# Last entry with empty string is the default if no keywords match
 SOURCE_ACTIONS = {
     'yt': [
         ('summarize', 'youtube_summary'),
@@ -59,12 +60,114 @@ SOURCE_ACTIONS = {
         ('insights', 'extract_wisdom'),
         ('lecture', 'summarize_lecture'),
         ('chapters', 'create_video_chapters'),
+        ('', 'youtube_summary'),  # default for YouTube
     ],
     'pdf': [
         ('summarize', 'summarize_paper'),
         ('analyze', 'analyze_paper'),
+        ('', 'summarize_paper'),  # default for PDF
     ],
 }
+
+
+def _normalize_url(argument: str) -> str:
+    """
+    Normalize a URL by adding https:// if no protocol is present.
+
+    Args:
+        argument: URL string, possibly without protocol
+
+    Returns:
+        URL with protocol (https:// added if missing)
+    """
+    argument = argument.strip()
+    if argument.startswith(('http://', 'https://')):
+        return argument
+    return f"https://{argument}"
+
+
+def _normalize_github_repo(argument: str) -> str:
+    """
+    Normalize GitHub repository reference to owner/repo format.
+
+    Handles:
+    - owner/repo (pass through)
+    - https://github.com/owner/repo
+    - github.com/owner/repo
+    - https://github.com/owner/repo/tree/branch/path
+
+    Returns owner/repo format or raises ValueError if invalid.
+    """
+    argument = argument.strip()
+
+    # Handle full GitHub URLs
+    if 'github.com' in argument:
+        # Remove protocol if present
+        url = argument
+        if url.startswith(('http://', 'https://')):
+            url = url.split('://', 1)[1]
+
+        # Remove github.com/
+        if url.startswith('github.com/'):
+            url = url[11:]  # len('github.com/')
+
+        # Extract owner/repo (first two path segments)
+        parts = url.split('/')
+        if len(parts) >= 2:
+            owner, repo = parts[0], parts[1]
+            # Remove .git suffix if present
+            if repo.endswith('.git'):
+                repo = repo[:-4]
+            return f"{owner}/{repo}"
+
+    # Check if it's already in owner/repo format
+    if '/' in argument and not argument.startswith('/'):
+        parts = argument.split('/')
+        if len(parts) >= 2 and parts[0] and parts[1]:
+            # Basic validation: owner and repo should be non-empty
+            owner, repo = parts[0], parts[1].split('.git')[0]
+            return f"{owner}/{repo}"
+
+    raise ValueError(
+        f"Invalid GitHub reference: '{argument}'. "
+        "Expected 'owner/repo' or a GitHub URL (e.g., 'https://github.com/owner/repo')"
+    )
+
+
+def _normalize_youtube_url(argument: str) -> str:
+    """
+    Normalize YouTube input to a full URL that the transcript loader can handle.
+
+    Handles:
+    - Raw video IDs: H17rN9Cz47w
+    - Full URLs: https://www.youtube.com/watch?v=...
+    - URLs without protocol: youtube.com/watch?v=..., youtu.be/...
+    - Various YouTube URL formats: /watch, /embed/, /shorts/, youtu.be
+
+    Returns a normalized URL or raises ValueError if invalid.
+    """
+    argument = argument.strip()
+
+    # Already has protocol - pass through
+    if argument.startswith(('http://', 'https://')):
+        return argument
+
+    # Check if it looks like a URL without protocol
+    youtube_domains = ('youtube.com', 'www.youtube.com', 'm.youtube.com', 'youtu.be')
+    for domain in youtube_domains:
+        if argument.startswith(domain):
+            return f"https://{argument}"
+
+    # Assume it's a video ID - validate format
+    # YouTube video IDs are 11 characters, alphanumeric with - and _
+    if re.match(r'^[a-zA-Z0-9_-]{10,12}$', argument):
+        return f"https://www.youtube.com/watch?v={argument}"
+
+    # Doesn't look like a valid video ID or URL
+    raise ValueError(
+        f"Invalid YouTube reference: '{argument}'. "
+        "Expected a video ID (e.g., 'dQw4w9WgXcQ') or URL (e.g., 'https://youtube.com/watch?v=...')"
+    )
 
 
 def _download_url_to_temp(url: str, suffix: str = '') -> str:
@@ -87,10 +190,10 @@ def _load_source(source: str) -> str:
 
     Supported prefixes:
     - file:/path/to/doc.md - Local text file (markdown, txt, etc.)
-    - yt:VIDEO_URL - YouTube transcript
-    - pdf:FILE_PATH or pdf:URL - PDF document
-    - github:owner/repo - GitHub repository
-    - url:https://... - Web page
+    - yt:VIDEO_ID or yt:URL - YouTube transcript (protocol optional)
+    - pdf:FILE_PATH or pdf:URL - PDF document (protocol optional for URLs)
+    - github:owner/repo or github:URL - GitHub repository (full URLs supported)
+    - url:ADDRESS - Web page (protocol optional, https:// added if missing)
     """
     if ':' not in source:
         raise ValueError(f"Invalid source format: {source}. Expected prefix:argument (e.g., yt:VIDEO_ID, pdf:/path/to/file)")
@@ -110,16 +213,23 @@ def _load_source(source: str) -> str:
         loaders = llm.get_fragment_loaders()
         if 'yt' not in loaders:
             raise ValueError("YouTube loader not available (install llm-fragments-youtube-transcript)")
-        results = loaders['yt'](argument)
+        # Normalize to full URL - handles video IDs, URLs without protocol, etc.
+        url = _normalize_youtube_url(argument)
+        results = loaders['yt'](url)
         return '\n\n'.join(str(r) for r in results)
 
     elif prefix == 'pdf':
         loaders = llm.get_fragment_loaders()
         if 'pdf' not in loaders:
             raise ValueError("PDF loader not available")
-        # Handle remote PDFs
-        if argument.startswith(('http://', 'https://')):
-            temp_file = _download_url_to_temp(argument, suffix='.pdf')
+        # Handle remote PDFs - normalize URL if it looks like a web address
+        argument = argument.strip()
+        is_url = argument.startswith(('http://', 'https://')) or (
+            '.' in argument.split('/')[0] and not os.path.exists(os.path.expanduser(argument))
+        )
+        if is_url:
+            url = _normalize_url(argument)
+            temp_file = _download_url_to_temp(url, suffix='.pdf')
             try:
                 results = loaders['pdf'](temp_file)
             finally:
@@ -133,18 +243,22 @@ def _load_source(source: str) -> str:
         loaders = llm.get_fragment_loaders()
         if 'github' not in loaders:
             raise ValueError("GitHub loader not available")
-        results = loaders['github'](argument)
+        # Normalize to owner/repo format - handles full GitHub URLs
+        repo = _normalize_github_repo(argument)
+        results = loaders['github'](repo)
         return '\n\n'.join(str(r) for r in results)
 
     elif prefix == 'url':
         # Use trafilatura for web pages with custom user agent
         import trafilatura
         from trafilatura.settings import use_config
+        # Normalize URL - add https:// if missing
+        url = _normalize_url(argument)
         config = use_config()
         config.set("DEFAULT", "USER_AGENT", "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/131.0.0.0 Safari/537.36")
-        downloaded = trafilatura.fetch_url(argument, config=config)
+        downloaded = trafilatura.fetch_url(url, config=config)
         if downloaded is None:
-            raise ValueError(f"Failed to fetch URL: {argument}")
+            raise ValueError(f"Failed to fetch URL: {url}")
         content = trafilatura.extract(downloaded, output_format="markdown")
         return content or ""
 
@@ -164,9 +278,15 @@ def _auto_select_pattern(task: str, input_text: str = "", source: str = "") -> O
     if ':' in source:
         prefix = source.split(':', 1)[0].lower()
         if prefix in SOURCE_ACTIONS:
+            default_pattern = None
             for action, pattern in SOURCE_ACTIONS[prefix]:
-                if action in task_lower:
+                if action == '':
+                    default_pattern = pattern  # Remember default
+                elif action in task_lower:
                     return pattern
+            # No specific action matched, use default if available
+            if default_pattern:
+                return default_pattern
 
     # No source or unknown prefix: use keyword + content hint matching
     input_lower = input_text.lower()[:1000]  # Only check first 1000 chars for hints
@@ -250,35 +370,43 @@ def prompt_fabric(task: str, pattern: str = "", input_text: str = "", source: st
     use the 'source' parameter instead of loading content first.
 
     Args:
-        task: Description of what to accomplish. Used for auto-selecting
-              the appropriate Fabric pattern.
-        pattern: (Optional) Specific Fabric pattern name to run. If not provided,
-                 auto-selects based on task or suggests options.
-            Examples: "extract_wisdom", "summarize_paper", "analyze_threat_report"
-        input_text: Content to process (use 'source' parameter instead when possible).
-        source: (Optional) Content source URI. Loads content internally
-                (keeps it out of main context). Formats:
-                - file:/path/to/doc.md - Local text file (markdown, txt, etc.)
-                - yt:VIDEO_URL - YouTube transcript
-                - pdf:FILE_PATH or pdf:URL - PDF document
+        task: Brief English description of the goal (e.g., "summarize", "extract wisdom").
+              Used for auto-selecting the appropriate pattern. Translate non-English
+              user requests to English for this parameter.
+        pattern: Specific pattern name to run. Optional - if omitted, auto-selects
+                 based on task and source type.
+                 Common patterns: extract_wisdom, youtube_summary, summarize_paper,
+                 analyze_threat_report, explain_code, create_sigma_rules
+        input_text: Text content to process. Prefer 'source' parameter instead
+                    to keep large content out of conversation context.
+        source: Content source URI (preferred over input_text). Formats:
+                - yt:VIDEO_ID - YouTube video (e.g., "yt:dQw4w9WgXcQ")
+                - yt:URL - YouTube URL (e.g., "yt:youtube.com/watch?v=abc123")
+                - pdf:/path/to/file.pdf - Local PDF
+                - pdf:example.com/doc.pdf - Remote PDF
                 - github:owner/repo - GitHub repository
-                - url:https://... - Web page
+                - github:https://github.com/owner/repo - GitHub URL
+                - url:example.com/page - Web page
+                - file:/path/to/file.md - Local text file
 
     Returns:
         JSON with 'pattern', 'result', 'auto_selected', and 'error' fields.
 
     Examples:
-        # YouTube video (content stays in subagent)
-        prompt_fabric(task="summarize video", source="yt:dQw4w9WgXcQ")
+        # YouTube video by ID
+        prompt_fabric(task="summarize", source="yt:dQw4w9WgXcQ")
 
-        # Local document
-        prompt_fabric(task="extract insights", source="file:~/notes.md")
+        # YouTube video by URL
+        prompt_fabric(task="extract wisdom", source="yt:youtube.com/watch?v=abc123")
 
-        # With explicit pattern
-        prompt_fabric(pattern="extract_wisdom", source="yt:VIDEO_ID")
+        # PDF with explicit pattern
+        prompt_fabric(pattern="summarize_paper", source="pdf:~/paper.pdf")
 
-        # With pre-loaded content (less efficient for main context)
-        prompt_fabric(task="summarize", input_text=already_loaded_content)
+        # GitHub repository
+        prompt_fabric(task="analyze", source="github:anthropics/anthropic-sdk-python")
+
+        # Pre-loaded content via input_text (when content is already in context)
+        prompt_fabric(task="explain code", input_text="def hello(): print('world')")
     """
     # Load from source if provided (keeps content in isolated context)
     if source:
