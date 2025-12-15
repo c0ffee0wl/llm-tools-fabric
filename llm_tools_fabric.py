@@ -360,7 +360,9 @@ def prompt_fabric(task: str, pattern: str = "", input_text: str = "", source: st
     """
     Run a Fabric AI pattern as an isolated subagent (230+ patterns available).
 
-    Patterns run in isolation - large content stays out of main conversation context.
+    Fabric patterns are specialized prompts for tasks like summarizing videos,
+    extracting insights, analyzing security threats, or explaining code. Patterns
+    run in isolation, keeping large content out of main conversation context.
 
     Args:
         task: Brief English description for auto-selection (e.g., "summarize", "extract wisdom").
