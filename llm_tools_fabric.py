@@ -358,29 +358,13 @@ def _run_pattern(pattern_name: str, input_text: str) -> str:
 
 def prompt_fabric(task: str, pattern: str = "", input_text: str = "", source: str = "") -> str:
     """
-    Run a Fabric AI pattern (only when explicitly requested).
+    Run a Fabric AI pattern as an isolated subagent (230+ patterns available).
 
-    USE ONLY when the user explicitly:
-    - Mentions "Fabric" or "pattern" by name
-    - Asks to run a specific pattern like "extract_wisdom"
-    - Requests Fabric-style analysis (summarize lecture, analyze threat, etc.)
-
-    DO NOT use for:
-    - General summarization (answer directly instead)
-    - Simple content processing (use other tools)
-    - Tasks the user didn't specifically request Fabric for
-
-    IMPORTANT: Always use English for the 'task' parameter.
-    Fabric patterns are written in English and produce best results with English input.
-
-    Fabric patterns run isolated - large content stays out of main context.
-    When processing YouTube videos, PDFs, web pages, or local files,
-    use the 'source' parameter instead of loading content first.
+    Patterns run in isolation - large content stays out of main conversation context.
 
     Args:
-        task: Brief English description of the goal (e.g., "summarize", "extract wisdom").
-              Used for auto-selecting the appropriate pattern. Translate non-English
-              user requests to English for this parameter.
+        task: Brief English description for auto-selection (e.g., "summarize", "extract wisdom").
+              Used for auto-selecting the appropriate pattern.
         pattern: Specific pattern name to run. Optional - if omitted, auto-selects
                  based on task and source type.
                  Common patterns: extract_wisdom, youtube_summary, summarize_paper,
@@ -388,12 +372,9 @@ def prompt_fabric(task: str, pattern: str = "", input_text: str = "", source: st
         input_text: Text content to process. Prefer 'source' parameter instead
                     to keep large content out of conversation context.
         source: Content source URI (preferred over input_text). Formats:
-                - yt:VIDEO_ID - YouTube video (e.g., "yt:dQw4w9WgXcQ")
-                - yt:URL - YouTube URL (e.g., "yt:youtube.com/watch?v=abc123")
-                - pdf:/path/to/file.pdf - Local PDF
-                - pdf:example.com/doc.pdf - Remote PDF
-                - github:owner/repo - GitHub repository
-                - github:https://github.com/owner/repo - GitHub URL
+                - yt:VIDEO_ID or yt:URL - YouTube video
+                - pdf:/path or pdf:URL - PDF document
+                - github:owner/repo or github:URL - GitHub repository
                 - url:example.com/page - Web page
                 - file:/path/to/file.md - Local text file
 
@@ -404,11 +385,8 @@ def prompt_fabric(task: str, pattern: str = "", input_text: str = "", source: st
         - Suggestions: <fabric_suggestions task="task">SUGGESTIONS</fabric_suggestions>
 
     Examples:
-        # YouTube video by ID
+        # YouTube video
         prompt_fabric(task="summarize", source="yt:dQw4w9WgXcQ")
-
-        # YouTube video by URL
-        prompt_fabric(task="extract wisdom", source="yt:youtube.com/watch?v=abc123")
 
         # PDF with explicit pattern
         prompt_fabric(pattern="summarize_paper", source="pdf:~/paper.pdf")
@@ -416,7 +394,7 @@ def prompt_fabric(task: str, pattern: str = "", input_text: str = "", source: st
         # GitHub repository
         prompt_fabric(task="analyze", source="github:anthropics/anthropic-sdk-python")
 
-        # Pre-loaded content via input_text (when content is already in context)
+        # Pre-loaded content
         prompt_fabric(task="explain code", input_text="def hello(): print('world')")
     """
     # Load from source if provided (keeps content in isolated context)
