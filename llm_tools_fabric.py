@@ -40,7 +40,7 @@ AUTO_SELECT_RULES = [
     (["analyze", "paper"], [], "analyze_paper"),
 
     # Security/Threat patterns
-    (["threat", "report", "security"], [], "analyze_threat_report"),
+    (["threat", "report"], [], "analyze_threat_report"),
     (["malware", "ioc", "indicator"], [], "analyze_malware"),
     (["sigma", "detection", "rule"], [], "create_sigma_rules"),
     (["stride", "threat", "model"], [], "create_stride_threat_model"),
@@ -230,11 +230,25 @@ def _load_source(source: str) -> str:
         loaders = llm.get_fragment_loaders()
         if 'pdf' not in loaders:
             raise ValueError("PDF loader not available")
-        # Handle remote PDFs - normalize URL if it looks like a web address
+        # Determine if argument is a URL or local file path
         argument = argument.strip()
-        is_url = argument.startswith(('http://', 'https://')) or (
-            '.' in argument.split('/')[0] and not os.path.exists(os.path.expanduser(argument))
-        )
+        if argument.startswith(('http://', 'https://')):
+            # Explicit URL protocol
+            is_url = True
+        elif argument.startswith(('/', './', '../', '~')):
+            # Explicit path indicators - definitely a file
+            is_url = False
+        elif os.path.exists(os.path.expanduser(argument)):
+            # File exists locally
+            is_url = False
+        elif '/' not in argument:
+            # Just a filename with no path (e.g., "paper.pdf") - treat as file
+            is_url = False
+        else:
+            # Has path structure - check if first segment looks like a domain
+            # e.g., "example.com/doc.pdf" vs "docs/paper.pdf"
+            first_segment = argument.split('/')[0]
+            is_url = '.' in first_segment and len(first_segment.split('.')[0]) > 0
         if is_url:
             url = _normalize_url(argument)
             temp_file = _download_url_to_temp(url, suffix='.pdf')
@@ -300,13 +314,16 @@ def _auto_select_pattern(task: str, input_text: str = "", source: str = "") -> O
     input_lower = input_text.lower()[:1000]  # Only check first 1000 chars for hints
 
     for keywords, content_hints, pattern_name in AUTO_SELECT_RULES:
-        # Check if all keywords are present in task
-        if all(kw in task_lower for kw in keywords):
-            # If content hints specified, check if any are present
-            if content_hints:
+        # Rules with content_hints: ANY keyword match + ANY content hint match
+        # Rules without content_hints: ALL keywords must match (more specific)
+        if content_hints:
+            # Content-aware rules: looser keyword matching, stricter content check
+            if any(kw in task_lower for kw in keywords):
                 if any(hint in input_lower for hint in content_hints):
                     return pattern_name
-            else:
+        else:
+            # General rules: require all keywords for specificity
+            if all(kw in task_lower for kw in keywords):
                 return pattern_name
 
     return None
